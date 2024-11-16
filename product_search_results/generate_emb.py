@@ -56,15 +56,47 @@ def generate_item_emb(args, tokenizer, model):
 
         with open(filepath, 'r') as file:
             for line in file:
-                item_pool.append(json.loads(line.strip())['metadata'])
+                item_data = json.loads(line.strip())
+                if args.categories and item_data['category'] not in args.categories:
+                    continue
+                item_pool.append(item_data['metadata'])
     else:
         raise NotImplementedError('Dataset not supported')
-    sentence2emb(args, item_pool, args.feat_name, tokenizer, model)
+    
+    category_suffix = '_' + '_'.join(args.categories) if args.categories else ''
+    feat_name = args.feat_name + category_suffix
+    
+    sentence2emb(args, item_pool, feat_name, tokenizer, model)
 
 
 def generate_query_emb(args, tokenizer, model):
     dataset = load_dataset(args.dataset)['test']
-    sentence2emb(args, dataset['query'], f'q_{args.feat_name}', tokenizer, model)
+    
+    if args.categories:
+        filepath = hf_hub_download(
+            repo_id=args.dataset,
+            filename='sampled_item_metadata_1M.jsonl',
+            repo_type='dataset'
+        )
+        
+        item_categories = {}
+        with open(filepath, 'r') as file:
+            for line in file:
+                item_data = json.loads(line.strip())
+                item_categories[item_data['item_id']] = item_data['category']
+        
+        filtered_queries = []
+        for query, item_id in zip(dataset['query'], dataset['item_id']):
+            if item_id in item_categories and item_categories[item_id] in args.categories:
+                filtered_queries.append(query)
+        queries_to_embed = filtered_queries
+    else:
+        queries_to_embed = dataset['query']
+    
+    category_suffix = '_' + '_'.join(args.categories) if args.categories else ''
+    feat_name = f'q_{args.feat_name}{category_suffix}'
+    
+    sentence2emb(args, queries_to_embed, feat_name, tokenizer, model)
 
 
 def check_path(path):
@@ -94,6 +126,7 @@ def parse_args():
     parser.add_argument('--plm_name', type=str, default='hyp1231/blair-roberta-base')
     parser.add_argument('--emb_type', type=str, default='CLS', help='item text emb type, can be CLS or Mean')
     parser.add_argument('--feat_name', type=str, default='blair-base', help='')
+    parser.add_argument('--categories', type=str, nargs='+', help='specific categories to evaluate (e.g., --categories Pet Care)')
     return parser.parse_args()
 
 

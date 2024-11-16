@@ -28,10 +28,15 @@ def load_args():
     parser.add_argument('--gpu_id', type=int, default=0, help='gpu id')
     parser.add_argument('-bs', type=int, default=64, help='batch size')
     parser.add_argument('--domain', action='store_true', help='whether to output results of each domain')
+    parser.add_argument('--data_path', type=str, default='./cache', help='path to the data')
+    parser.add_argument('--categories', type=str, nargs='+', help='specific categories to evaluate (e.g., --categories Pet Care)')
 
     args = parser.parse_args()
 
-    args.data_path = './cache'
+    if args.categories:
+        category_suffix = '_' + ''.join(args.categories)
+        args.suffix = args.suffix.replace('CLS', '') + category_suffix + 'CLS'
+
     args.dataset_name = args.dataset.split('/')[-1]
     args.plm_size = 1024 if 'large' in args.suffix else 768
 
@@ -41,11 +46,20 @@ def load_args():
     return args
 
 
-def load_items(args):
+def load_items(args, categories_of_interest=None):
     id2item = []
     item2id = {}
 
     if args.dataset == 'McAuley-Lab/Amazon-C4':
+        # Load category mapping
+        cat_filepath = hf_hub_download(
+            repo_id='McAuley-Lab/Amazon-Reviews-2023',
+            filename='asin2category.json',
+            repo_type='dataset'
+        )
+        with open(cat_filepath, 'r') as file:
+            asin2category = json.loads(file.read())
+
         filepath = hf_hub_download(
             repo_id=args.dataset,
             filename='sampled_item_metadata_1M.jsonl',
@@ -53,12 +67,20 @@ def load_items(args):
         )
 
         with open(filepath, 'r') as file:
-            for idx, line in enumerate(file):
-                item = json.loads(line.strip())['item_id']
+            idx = 0
+            for line in file:
+                item_data = json.loads(line.strip())
+                item = item_data['item_id']
+                
+                # Skip if not in categories of interest
+                if args.categories and item_data['category'] not in args.categories:
+                    continue
+                    
                 id2item.append(item)
                 item2id[item] = idx
+                idx += 1
                 assert len(id2item) == len(item2id)
-                assert len(id2item) == idx + 1
+                assert len(id2item) == idx
     else:
         raise NotImplementedError('Dataset not supported')
 
@@ -68,9 +90,33 @@ def load_items(args):
 def load_queries(args, item2id):
     query2target = []
     dataset = load_dataset(args.dataset)['test']
-    for target_item in dataset['item_id']:
-        target_id = item2id[target_item]
-        query2target.append(target_id)
+    
+    if args.categories:
+        # Load category mapping
+        filepath = hf_hub_download(
+            repo_id=args.dataset,
+            filename='sampled_item_metadata_1M.jsonl',
+            repo_type='dataset'
+        )
+        
+        item_categories = {}
+        with open(filepath, 'r') as file:
+            for line in file:
+                item_data = json.loads(line.strip())
+                item_categories[item_data['item_id']] = item_data['category']
+        
+        # Only include queries whose target items are in the specified categories
+        for query, target_item in zip(dataset['query'], dataset['item_id']):
+            if target_item in item2id and target_item in item_categories and \
+               item_categories[target_item] in args.categories:
+                target_id = item2id[target_item]
+                query2target.append(target_id)
+    else:
+        for target_item in dataset['item_id']:
+            if target_item in item2id:  # Only include if target exists in filtered set
+                target_id = item2id[target_item]
+                query2target.append(target_id)
+                
     return query2target
 
 

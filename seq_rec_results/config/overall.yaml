@@ -1,4 +1,5 @@
-data_path: 'dataset/processed/'
+data_path: /content/processed
+dataset_save_path: /content/processed
 benchmark_filename: [train, valid, test]
 alias_of_item_id: [item_id_list]
 load_col:
